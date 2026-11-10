@@ -71,3 +71,10 @@ outputs/
 DownloadedTracks/
 *.pkl
 *.pem
+
+# Local environment and leftovers from the repo cleanup
+venv/
+.venv/
+_backup/
+_old_upstream_copy/
+finish_cleanup.ps1

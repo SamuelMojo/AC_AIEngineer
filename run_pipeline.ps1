@@ -25,6 +25,10 @@ aws ec2 wait instance-running --instance-ids $InstanceId
 Write-Host "Launching background S3 sync watcher..." -ForegroundColor Cyan
 Start-Process powershell -ArgumentList "-NoExit", "-Command", "python sync_outputs_v2.py"
 
-# 4. Start local training script
-Write-Host "Starting local training script (train.py)..." -ForegroundColor Green
-python train.py
+# 4. Start training (assetto_corsa_gym lives in the submodule; run it from the repo root so
+#    outputs\ and this repo's config.yml are used)
+Write-Host "Starting training (external\assetto_corsa_gym\train.py)..." -ForegroundColor Green
+$Upstream = Join-Path $PSScriptRoot "external\assetto_corsa_gym"
+$env:PYTHONPATH = "$Upstream;$Upstream\assetto_corsa_gym;$Upstream\algorithm\discor"
+Set-Location $PSScriptRoot
+python "$Upstream\train.py" --config config.yml
