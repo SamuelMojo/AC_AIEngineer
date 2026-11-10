@@ -29,7 +29,8 @@ answers questions about it the way a pit wall engineer would.
 
 1. **Training (upstream).** assetto_corsa_gym trains a Soft Actor-Critic agent to drive. After every
    attempt it writes a Parquet file for that run: speed, throttle and brake, G-forces, tyre
-   temperatures and slip, track position, reward and lap time.
+   temperatures and slip, track position, reward and lap time. A real example is included:
+   [`examples/monza_full_lap.parquet`](examples/README.md) (one full lap, 110 columns).
 2. **Streaming to the cloud – `sync_outputs_v2.py`.** A watcher polls `outputs/` every 5 seconds and
    uploads new or changed lap files to an S3 bucket.
 3. **Live dashboard – `dashboard_v2.py`.** A Streamlit app on EC2 reads directly from S3 and shows:
@@ -189,20 +190,26 @@ licence credited.
 
 ## Repository layout
 
+**Live pipeline** (the files that run):
+
 | File | Purpose |
 |---|---|
 | `run_pipeline.ps1` | One-command launcher for the whole stack |
 | `sync_outputs_v2.py` | Incremental lap-telemetry upload to S3 |
 | `dashboard_v2.py` | Streamlit dashboard with live view, charts and the AI engineer |
 | `telemetry_context.py` | Builds the verified fact sheet and grounding rules for the AI engineer ([how it works](docs/ai_engineer.md)) |
-| `telemetry_parser.py` | Loads lap parquet files and summarises them |
-| `race_engineer.py` | Terminal listener that debriefs each new run automatically |
-| `pit_radio.py` | Terminal chat with the AI engineer about the latest run |
-| `read_logs.py` | Quick inspection of telemetry logs |
 | `config.yml` | Training config (adapted from assetto_corsa_gym; see `THIRD_PARTY_NOTICES.md`) |
+| `requirements.txt` | Python dependencies |
 | `.github/workflows/deploy.yml` | Post-deploy smoke test for the hosted dashboard |
-| `dashboard.py`, `sync_outputs.py` | v1 versions, kept for comparison |
 | `external/assetto_corsa_gym` | Upstream RL environment and training code (submodule) |
+
+**Supporting material:**
+
+| Folder | Contents |
+|---|---|
+| [`examples/`](examples/README.md) | A real one-lap telemetry file from Assetto Corsa, with a guide to all 110 columns |
+| [`docs/`](docs/) | [How the AI engineer works](docs/ai_engineer.md), [preventing hallucinations](docs/preventing_hallucinations.md), [the SSH key incident](docs/problems_overcome_ssh_key.md) and screenshots |
+| [`legacy/`](legacy/README.md) | Retired v1 code (first dashboard and uploader, terminal AI tools), kept for comparison |
 
 ## Setup
 

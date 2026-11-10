@@ -1,6 +1,6 @@
 """Sync new telemetry parquet files from outputs/ to S3.
 
-Differences from sync_outputs.py:
+Differences from legacy/sync_outputs.py:
 * Uploads a file only when it is new or has changed (the old script re-uploaded EVERYTHING
   every 10s, which saturated the upload link and reset every file's S3 'LastModified', so the
   dashboard could no longer tell which run was newest or whether a sim was live).

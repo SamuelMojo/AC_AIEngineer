@@ -1,6 +1,6 @@
 """Assetto Corsa telemetry dashboard (v2).
 
-What changed vs dashboard.py
+What changed vs legacy/dashboard.py
 ----------------------------
 * The pit radio chat is rendered FIRST and never waits on S3 - previously it sat
   underneath get_reward_progression(), which downloaded every parquet file in the

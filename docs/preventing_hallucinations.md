@@ -100,5 +100,5 @@ to the model. For example, Run #233's fact sheet lists three full laps (2:01.260
 - An 8B model can still occasionally ignore its instructions. The next step is **tool calling**:
   give the model functions such as `get_corner_stats(run, corner)` and `compare_runs(a, b)`, so
   it fetches exactly the data a question needs instead of relying on a fixed summary.
-- The v1 terminal tools (`race_engineer.py`, `pit_radio.py`) still use their original
+- The v1 terminal tools (`legacy/race_engineer.py`, `legacy/pit_radio.py`) still use their original
   summaries.

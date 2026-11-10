@@ -78,3 +78,6 @@ venv/
 _backup/
 _old_upstream_copy/
 finish_cleanup.ps1
+
+# ...except the small example file documented in examples/README.md
+!examples/*.parquet
