@@ -1,0 +1,3 @@
+[submodule "external/assetto_corsa_gym"]
+	path = external/assetto_corsa_gym
+	url = https://github.com/dasGringuen/assetto_corsa_gym.git
