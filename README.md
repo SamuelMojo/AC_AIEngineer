@@ -40,9 +40,10 @@ answers questions about it the way a pit wall engineer would.
      plus a session picker for browsing finished sessions
 4. **AI race engineer – dashboard, `race_engineer.py`, `pit_radio.py`.** Llama 3.1 runs locally
    through Ollama on the GPU machine, so inference is free. The dashboard on EC2 reaches it over a
-   private network link. The code turns raw telemetry into a compact, factual summary – recent-run
-   history, lap times, off-track count and which Monza corner the car reached – and gives only
-   that to the model, so answers stay grounded in real data. It can:
+   private network link. `telemetry_context.py` turns raw telemetry into a verified fact sheet –
+   full laps and times, how and where the run ended, a per-corner table for all six Monza sections,
+   tyre temperatures and slip, and the previous 10 runs – and the model may only quote from it
+   (see [Preventing hallucinations](#update-preventing-hallucinations)). It can:
    - write an **automated engineer brief** for the selected run
    - answer questions in a **pit radio** chat, streaming replies word by word
 5. **Operations.**
@@ -76,6 +77,35 @@ grew. v2 is a rewrite of both, based on what went wrong in practice.
 | Auto-refresh re-ran the whole page and interrupted the chat | Only the live panel refreshes, on its own timer (`st.fragment`) |
 | Ollama calls could hang indefinitely | Timeouts, streamed replies, model kept loaded between questions, online/offline indicator |
 | A file dropdown that kept jumping as runs arrived | Session scoping (current live session / all / a past session), always showing the latest run |
+| AI context read columns that don't exist, so lap times and off-track corners were always missing | Verified fact sheet from real columns, plus grounding rules (see below) |
+
+---
+
+## Update: preventing hallucinations
+
+The AI engineer was confidently inventing details: a 2:35.71 lap time, "left the track at Lesmo
+five times" and a corner speed that was never measured. Two faults combined:
+
+1. **Wrong data.** The prompt was built from columns (`lap_time`, `progress`) that don't exist in
+   any of the 856 recorded runs, so every run was described as "lap not completed, off-track
+   corner: none".
+2. **A prompt that demanded numbers.** It told the model to *always* include exact figures and
+   corner names, so with nothing real to quote, it made them up.
+
+The fix:
+- **`telemetry_context.py`**: one tested module that computes every fact the model may quote, from
+  columns confirmed to exist. Lap times only count laps driven start-to-finish inside a single
+  episode, because the game's lap timer keeps running across car resets. Done properly, the data
+  shows 16 genuine full laps (best **1:59.802**) that the old dashboard never reported.
+- **Richer context**: how and where each run ended, a per-corner table (speeds, braking,
+  throttle, G), tyre temperatures and slip, the last 10 runs, and an explicit list of what is
+  *not* in the data.
+- **Grounding rules**: use only the DATA block, quote numbers exactly, and say "the dashboard
+  doesn't have that data" when a question goes beyond it.
+- **Less creativity**: temperature 0.2, a proper system/user message split, and the stray
+  "assistant" label removed.
+
+Full write-up: [`docs/preventing_hallucinations.md`](docs/preventing_hallucinations.md).
 
 ---
 
@@ -102,10 +132,12 @@ deployment off stored SSH keys entirely (a server-side watchdog pulls changes in
 always-available parts (storage and the web app) run in AWS. The EC2 instance is started on demand
 by the launch script.
 
-**Grounding an LLM in real data.** Instead of handing the model raw telemetry, the app computes the
-facts first (lap times, peak speed, off-track counts, the corner where the car left the track) and
-asks the model to explain only those facts. That keeps answers specific and stops the model
-inventing numbers.
+**Catching an LLM making things up.** The AI engineer was quoting lap times and corners that didn't
+exist. I traced it to two causes: the prompt was built from telemetry columns that were never
+recorded, and the prompt demanded exact numbers anyway. I checked all 856 runs to learn how the
+game really records laps, then rebuilt the context as a verified fact sheet with explicit
+"don't know" rules. Along the way it surfaced 16 genuine full laps the dashboard had never
+reported.
 
 **Respecting licences.** The project builds on an MIT-licensed research codebase. I restructured the
 repo so it contains only my own work, with the upstream code pulled in as a pinned submodule and its
@@ -119,7 +151,7 @@ licence credited.
 - **Data engineering:** incremental file sync, write-safe uploads, columnar reads, caching
 - **AWS:** S3, EC2, AWS CLI, IAM credentials
 - **Web/visualisation:** Streamlit, Plotly
-- **LLMs:** Ollama, Llama 3.1, prompt design and grounding, streaming responses
+- **LLMs:** Ollama, Llama 3.1, prompt design, grounding and hallucination prevention, streaming responses
 - **DevOps:** GitHub Actions smoke tests, auto-deploy watchdog, PowerShell automation, Linux server admin
 - **Security:** key rotation, secret hygiene, git history rewriting
 - **ML context:** working alongside a reinforcement-learning (Soft Actor-Critic) research codebase
@@ -133,6 +165,7 @@ licence credited.
 | `run_pipeline.ps1` | One-command launcher for the whole stack |
 | `sync_outputs_v2.py` | Incremental lap-telemetry upload to S3 |
 | `dashboard_v2.py` | Streamlit dashboard with live view, charts and the AI engineer |
+| `telemetry_context.py` | Builds the verified fact sheet and grounding rules for the AI engineer |
 | `telemetry_parser.py` | Loads lap parquet files and summarises them |
 | `race_engineer.py` | Terminal listener that debriefs each new run automatically |
 | `pit_radio.py` | Terminal chat with the AI engineer about the latest run |

@@ -15,6 +15,7 @@ What changed vs dashboard.py
 """
 
 import os
+import re
 from concurrent.futures import ThreadPoolExecutor
 
 import ollama
@@ -23,6 +24,8 @@ import plotly.express as px
 import pyarrow.parquet as pq
 import s3fs
 import streamlit as st
+
+import telemetry_context as tc
 
 st.set_page_config(page_title="Assetto Corsa Telemetry Dashboard", page_icon=None, layout="wide")
 
@@ -53,25 +56,10 @@ LIVE_THRESHOLD_S = 120
 MAX_PLOT_POINTS = 2000
 LATEST = "__latest__"
 
-LAP_COLS = ["lap_time", "lap_duration", "lapTime"]
-NEEDED_COLS = ["speed", "accelY", "out_of_track", "progress", "accStatus", "brakeStatus", "reward"] + LAP_COLS
-
-MONZA_CORNERS = [
-    {"name": "Variante del Rettifilo (Turn 1 Chicane)", "start": 0.00, "end": 0.12},
-    {"name": "Curva Grande (Turn 3)", "start": 0.12, "end": 0.28},
-    {"name": "Variante della Roggia (Turn 4 Chicane)", "start": 0.28, "end": 0.45},
-    {"name": "Lesmo Curves (Turns 6-7)", "start": 0.45, "end": 0.65},
-    {"name": "Variante Ascari (Turn 8 Chicane)", "start": 0.65, "end": 0.82},
-    {"name": "Curva Parabolica (Turn 11)", "start": 0.82, "end": 1.00},
-]
-
-
-def identify_monza_corner(progress_val):
-    for corner in MONZA_CORNERS:
-        if corner["start"] <= progress_val < corner["end"]:
-            return corner["name"]
-    return "Unknown Section"
-
+# Columns for the charts plus everything the AI fact sheet needs (see telemetry_context.py).
+NEEDED_COLS = list(dict.fromkeys(["speed", "accelY", "out_of_track", "accStatus", "brakeStatus", "reward"]
+                                 + tc.CONTEXT_COLS))
+LLM_OPTIONS = {"temperature": 0.2}  # low temperature: fewer creative (made-up) answers
 
 # --------------------------------------------------------------------------- S3 access
 @st.cache_resource
@@ -137,27 +125,10 @@ def load_run(path, mtime):
     return read_cols(path, NEEDED_COLS)
 
 
-def lap_time_of(df):
-    for col in LAP_COLS:
-        if col in df.columns and not df[col].empty:
-            val = df[col].iloc[-1]
-            if pd.notna(val) and val > 0:
-                return float(val)
-    return None
-
-
 def _compute_stats(run):
     try:
-        df = read_cols(run["path"], ["speed", "accelY", "out_of_track", "reward"] + LAP_COLS)
-        return {
-            "name": run["name"],
-            "lap_time": lap_time_of(df),
-            "peak": float(df["speed"].max()) if "speed" in df else 0.0,
-            "mean": float(df["speed"].mean()) if "speed" in df else 0.0,
-            "max_g": float(df["accelY"].abs().max()) if "accelY" in df else 0.0,
-            "off": bool(df["out_of_track"].any()) if "out_of_track" in df else False,
-            "reward": float(df["reward"].sum()) if "reward" in df else float(len(df)),
-        }
+        facts = tc.run_facts(read_cols(run["path"], tc.CONTEXT_COLS))
+        return {"name": run["name"], **facts}
     except Exception:  # noqa: BLE001
         return None
 
@@ -186,55 +157,23 @@ def resolve(runs, key):
     return next((r for r in runs if r["path"] == key), runs[0])
 
 
-def history_text(runs, stats, current, max_history=10):
-    lines = []
-    for run, s in zip(runs, stats):
-        if run["path"] == current["path"] or s is None:
-            continue
-        lap = f"{s['lap_time']:.3f}s" if s["lap_time"] else "N/A"
-        lines.append(
-            f"- Run {s['name']} | Lap Time: {lap} | Peak Speed: {s['peak']:.1f} m/s | "
-            f"Mean Speed: {s['mean']:.1f} m/s | Max G: {s['max_g']:.2f} G | Off-track: {s['off']}"
-        )
-        if len(lines) >= max_history:
-            break
-    return "\n".join(lines) if lines else "This is the first recorded training run."
-
-
-def build_context(selected_key, scope):
-    """Text block handed to the LLM. Only called when the user asks something / clicks debrief."""
+def build_context(selected_key, scope, max_history=10):
+    """Verified fact sheet handed to the LLM. Only called when the user asks something / clicks debrief."""
     runs, _ = scoped_runs(scope)
     run = resolve(runs, selected_key)
     if run is None:
         return "No telemetry data available yet."
     df = load_run(run["path"], run["mtime"])
-    history = history_text(runs, get_all_stats(runs), run)
+    idx = runs.index(run)                      # runs are newest first
+    number = len(runs) - idx                   # Run #1 = oldest, matching the reward chart
+    earlier = runs[idx + 1: idx + 1 + max_history]
+    history = [(number - k - 1, s) for k, s in enumerate(get_all_stats(earlier))]
+    return tc.build_fact_sheet(df, number, len(runs), history)
 
-    lap = lap_time_of(df)
-    lap_str = f"{lap:.3f} seconds" if lap else "Not Completed / In Progress"
-    off_track = bool(df["out_of_track"].any()) if "out_of_track" in df else False
-    corner = "None"
-    if off_track and "progress" in df:
-        off_frames = df[df["out_of_track"] == True]  # noqa: E712
-        if not off_frames.empty:
-            modes = off_frames["progress"].apply(identify_monza_corner).mode()
-            if not modes.empty:
-                corner = str(modes[0])
-    speed = df["speed"] if "speed" in df else pd.Series([0.0])
-    g = df["accelY"].abs().max() if "accelY" in df else 0.0
-    return f"""
-    [ACTIVE RUN METRICS]
-    - Total Training Runs So Far: {len(runs)}
-    - Active Log File: {run['name']}
-    - Completed Lap Time: {lap_str}
-    - Total Frames: {len(df)}
-    - Peak Speed: {speed.max():.1f} m/s (Average Speed: {speed.mean():.1f} m/s)
-    - Max Cornering G-Force: {g:.2f} G
-    - Went Off Track: {off_track} (Primary Off-Track Corner: {corner})
 
-    [LAST 10 RUNS ROLLING MEMORY]
-    {history}
-    """
+def clean_reply(text):
+    """Llama sometimes prefixes its answer with its own role label ("assistant")."""
+    return re.sub(r"^\s*assistant\s*:?\s*", "", text, flags=re.IGNORECASE)
 
 
 # --------------------------------------------------------------------------- Ollama
@@ -252,32 +191,28 @@ def ollama_status():
 
 
 def stream_reply(messages):
-    for chunk in ollama_client().chat(model=OLLAMA_MODEL, messages=messages, stream=True, keep_alive="30m"):
+    for chunk in ollama_client().chat(model=OLLAMA_MODEL, messages=messages, stream=True, keep_alive="30m",
+                                      options=LLM_OPTIONS):
         yield chunk["message"]["content"]
 
 
+SUMMARY_SYSTEM = f"""You are an R&D simulation engineer explaining how an AI driving model is learning.
+Write a simple, clear 2-sentence summary in everyday language for non-technical readers.
+Start directly with the analysis (no "Sure", no "Here is a summary").
+Mention the full lap time only if one is listed, how the run ended and where, and how it compares
+with the previous runs.
+
+{tc.GROUNDING_RULES}"""
+
+
 def generate_summary_text(selected_key, scope, run_name):
-    prompt = f"""
-        You are an R&D simulation engineer explaining how an AI driving model is learning.
-        Provide a simple, clear 2-sentence summary using everyday language.
-
-        {build_context(selected_key, scope)}
-
-        Strict Instructions:
-        - NEVER start your response with filler phrases like "Here is a 2-sentence summary", "Sure", or introductory text. Jump immediately into the analysis.
-        - Call the agent solely "driver".
-        - If a lap time is recorded, include it explicitly.
-        - If an off-track excursion or wall crash occurred, mention ONLY the single most frequent or critical Monza corner where it happened based on the mapping.
-        - Include specific numbers and figures (such as lap time, peak speed, average speed, or G-forces) directly in the text.
-        - Keep it simple so non-technical people can easily understand how performance compares to past runs.
-        """
+    messages = [
+        {"role": "system", "content": SUMMARY_SYSTEM},
+        {"role": "user", "content": f"DATA:\n{build_context(selected_key, scope)}\n\nWrite the 2-sentence debrief."},
+    ]
     try:
-        resp = ollama_client().chat(
-            model=OLLAMA_MODEL,
-            messages=[{"role": "system", "content": prompt}],
-            keep_alive="30m",
-        )
-        text = resp["message"]["content"].strip()
+        resp = ollama_client().chat(model=OLLAMA_MODEL, messages=messages, keep_alive="30m", options=LLM_OPTIONS)
+        text = clean_reply(resp["message"]["content"].strip())
         with open(run_name + ".summary.txt", "w", encoding="utf-8") as f:
             f.write(text)
         return text
@@ -339,22 +274,16 @@ def render_chat(selected_key, scope):
         with st.chat_message("user"):
             st.markdown(prompt)
 
-        system_prompt = f"""
-            You are a helpful R&D simulation engineer explaining training progress over the pit radio.
-            Answer in clear, simple, non-technical language that is easy for anyone to understand.
-            Always refer to the AI model as "driver".
-            Rely heavily on the rolling memory history of the previous 10 runs and lap times to explain how the driver is improving, struggling, or repeatedly crashing into walls.
-            Always include exact numbers, stats, and figures from the data to support your answers. Use real Monza corner names when discussing track positions.
-
-            Context provided:
-            {build_context(selected_key, scope)}
-
-            Keep responses short, clear, and friendly.
-            """
+        system_prompt = (
+            "You are a helpful R&D simulation engineer explaining training progress over the pit radio.\n"
+            "Answer in clear, simple language, in a few short sentences. Use Monza corner names from the data.\n\n"
+            f"{tc.GROUNDING_RULES}\n"
+            f"DATA:\n{build_context(selected_key, scope)}"
+        )
         history = [{"role": m["role"], "content": m["content"]} for m in st.session_state.messages[-10:]]
         with st.chat_message("assistant"):
             try:
-                reply = st.write_stream(stream_reply([{"role": "system", "content": system_prompt}] + history))
+                reply = clean_reply(st.write_stream(stream_reply([{"role": "system", "content": system_prompt}] + history)))
             except Exception as e:  # noqa: BLE001
                 reply = f"AI offline. (Radio error: {e})"
                 st.markdown(reply)
