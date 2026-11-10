@@ -7,10 +7,42 @@ The dashboard has two AI features, both powered by **Llama 3.1** running locally
 - **Pit Radio Channel**: a chat box where you can ask follow-up questions.
 
 Both use the same pipeline: **raw telemetry → verified fact sheet → prompt with grounding rules →
-Llama 3.1**. The model never sees raw telemetry, only the fact sheet.
+Llama 3.1**. The model never sees raw telemetry, only the fact sheet. (It didn't start that way:
+see [section 0](#0-where-it-started-letting-the-ai-read-everything).)
 
 Code: [`telemetry_context.py`](../telemetry_context.py) builds the fact sheet and rules;
 [`dashboard_v2.py`](../dashboard_v2.py) builds the prompts and talks to Ollama.
+
+---
+
+## 0. Where it started: letting the AI read everything
+
+The first version of this project gave the model the telemetry itself. The idea was simple: the
+data is all there, so let the AI scan it and work out what happened. It didn't work, for three
+reasons.
+
+**It was far too much data.** One training run is a parquet file with around 100 columns and up to
+15,000 rows. That is roughly 1.5 million numbers for a single run, before counting the previous
+runs the engineer was meant to compare it with. That is many times more than a language model
+can hold at once, and by default Ollama quietly cuts off whatever doesn't fit. So the model
+was often answering from only the start of a run, without saying so.
+
+**It was very slow.** Every question meant loading, formatting and sending a huge block of text,
+and then waiting for the model to read all of it before it wrote a single word. On a live
+dashboard that is unusable.
+
+**It was pointless, even when it fit.** Language models are poor at reading thousands of rows of
+numbers. They can't reliably find a maximum, count off-track events or compare two runs by
+scanning raw values. A few lines of pandas do that exactly and instantly. The model's real job is
+what it is good at: explaining findings in plain English.
+
+**The change:** split the work. pandas does the maths and produces a short, verified fact sheet,
+and the model only turns that into language. The fact sheet is about 1,000 tokens instead of
+millions, answers arrive quickly, and every number can be checked. It was the first step toward
+the grounding approach described in
+[preventing_hallucinations.md](preventing_hallucinations.md).
+
+> **Rule of thumb from this project:** use code for calculation and the LLM for explanation.
 
 ---
 

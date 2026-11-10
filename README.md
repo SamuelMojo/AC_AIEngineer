@@ -58,7 +58,9 @@ answers questions about it the way a pit wall engineer would.
 
 Both AI features follow the same pipeline: **raw telemetry → verified fact sheet → prompt with
 grounding rules → Llama 3.1** (running locally through Ollama). The model never sees raw
-telemetry. `telemetry_context.py` first boils each run down to a short plain-text fact sheet:
+telemetry. (The project started by letting the AI scan it all; that was slow and pointless, so
+the maths moved into code. See [the full story](docs/ai_engineer.md#0-where-it-started-letting-the-ai-read-everything).)
+`telemetry_context.py` first boils each run down to a short plain-text fact sheet:
 laps and lap times, how and where the run ended, per-corner speeds and braking, tyre
 temperatures and the previous 10 runs. The model may only quote from it.
 
@@ -152,6 +154,12 @@ deployment off stored SSH keys entirely (a server-side watchdog pulls changes in
 **Cost-aware hybrid architecture.** LLM inference runs free on my own GPU; only the cheap,
 always-available parts (storage and the web app) run in AWS. The EC2 instance is started on demand
 by the launch script.
+
+**Knowing what not to give the AI.** My first version let the LLM scan the telemetry directly.
+One run is around 1.5 million numbers, far beyond what the model can hold, so it was slow and
+often answered from a truncated slice of the data. Models are also poor at arithmetic over
+thousands of rows. I split the job: pandas computes the facts exactly and instantly, and the
+model only explains them. The prompt dropped from millions of tokens to about a thousand.
 
 **Catching an LLM making things up.** The AI engineer was quoting lap times and corners that didn't
 exist. I traced it to two causes: the prompt was built from telemetry columns that were never
