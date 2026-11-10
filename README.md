@@ -54,6 +54,27 @@ answers questions about it the way a pit wall engineer would.
 
 ---
 
+## How the AI engineer works
+
+Both AI features follow the same pipeline: **raw telemetry → verified fact sheet → prompt with
+grounding rules → Llama 3.1** (running locally through Ollama). The model never sees raw
+telemetry. `telemetry_context.py` first boils each run down to a short plain-text fact sheet:
+laps and lap times, how and where the run ended, per-corner speeds and braking, tyre
+temperatures and the previous 10 runs. The model may only quote from it.
+
+- **Automated Engineer Brief.** One click produces a two-sentence debrief of the selected run.
+  The instructions go in a `system` message and the fact sheet in a `user` message. The reply comes
+  back in one piece and is saved, so it reappears next time that run is opened.
+- **Pit Radio Channel.** A chat box for open questions. Each question is sent with the
+  instructions and fact sheet plus the **last 10 chat messages**, so follow-ups like "why?" work.
+  The fact sheet is rebuilt for every question, so answers stay current while training is live,
+  and replies stream in word by word.
+
+Full details, including the exact prompts, a real fact sheet and the JSON sent to Ollama:
+[**docs/ai_engineer.md**](docs/ai_engineer.md).
+
+---
+
 ## What changed in v2
 
 The first versions (`dashboard.py`, `sync_outputs.py`) worked, but broke down as the number of runs
@@ -165,7 +186,7 @@ licence credited.
 | `run_pipeline.ps1` | One-command launcher for the whole stack |
 | `sync_outputs_v2.py` | Incremental lap-telemetry upload to S3 |
 | `dashboard_v2.py` | Streamlit dashboard with live view, charts and the AI engineer |
-| `telemetry_context.py` | Builds the verified fact sheet and grounding rules for the AI engineer |
+| `telemetry_context.py` | Builds the verified fact sheet and grounding rules for the AI engineer ([how it works](docs/ai_engineer.md)) |
 | `telemetry_parser.py` | Loads lap parquet files and summarises them |
 | `race_engineer.py` | Terminal listener that debriefs each new run automatically |
 | `pit_radio.py` | Terminal chat with the AI engineer about the latest run |
